@@ -1,0 +1,78 @@
+subdomain: turbonemesis
+
+escalation_policy_id: P2ZK7FM
+
+default_user_id: P55X8MY
+
+default_time_zone: EST
+
+offhours:
+    EST: [0, 1, 2, 3, 4, 5]
+    PST: [6, 7, 8, 9, 10, 11]
+
+layers:
+
+ - name: ops1
+   source: ops
+   respect_offhours: False
+   block_size: 4
+
+ - name: ops2
+   source: ops
+   offset: 1
+   respect_offhours: False
+   block_size: 4
+
+ - name: triage
+   source: triage
+   respect_offhours: False
+   block_size: 4
+
+ - name: everyone1
+   source: engineering
+   block_size: 4
+
+ - name: everyone2
+   source: engineering
+   offset: 1
+   block_size: 4
+
+ - name: everyone3
+   source: engineering
+   offset: 2
+   block_size: 4
+
+users:
+
+ - id: P8EI9BL
+   offhours: [EST]
+   tags: [engineering]
+   vacation: True
+
+ - id: P55X8MY
+   offhours: [EST]
+   tags: [engineering, triage]
+
+ - id: PDIRQ7E
+   offhours: [EST]
+   tags: [ops, engineering]
+
+ - id: PA93PVR
+   offhours: [EST]
+   tags: [ops, engineering]
+
+ - id: PWZFOG1
+   offhours: [PST]
+   tags: [engineering, triage]
+
+ - id: PT0UO3B
+   offhours: [PST]
+   tags: [engineering, triage]
+
+ - id: PPR6NRO
+   offhours: [PST]
+   tags: [engineering]
+   vacation: False
+
+
+

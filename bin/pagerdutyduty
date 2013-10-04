@@ -1,0 +1,233 @@
+#!/usr/bin/env python
+
+import argparse
+import copy
+from collections import deque
+from datetime import date, datetime, timedelta
+
+from pygerduty import PagerDuty
+from yaml import load
+
+DEBUG = False
+
+DEFAULT_BLOCK_SIZE = 24
+
+OFFHOURS = {}
+
+PD_TIMEZONES = {
+    "EST": "Eastern Time (US & Canada)",
+    "PST": "Pacific Time (US & Canada)",
+    "UTC": "UTC",
+}
+
+
+class User(object):
+    def __init__(self, yaml):
+        self.id = yaml["id"]
+        self.offhours = yaml["offhours"]
+        self.tags = yaml["tags"]
+        self.vacation = yaml.get("vacation", False)
+
+    @property
+    def off_hours(self):
+        return OFFHOURS[self.offhours]
+
+    def __str__(self):
+        if DEBUG:
+            return "User({})|offhours:{} tags:{} vacation:{}".format(
+                self.id, self.tz, self.tags, self.vacation)
+        else:
+            return "User({})".format(self.id)
+
+    def __repr__(self):
+        return str(self)
+
+
+class EscalationPolicy(object):
+    def __init__(self, yaml, users):
+        self.id = yaml["escalation_policy_id"]
+        self.fallback_user_id = yaml["default_user_id"]
+        self.layers = []
+
+        for l in yaml["layers"]:
+            s = Schedule(l)
+            s.set_users(
+                [u for u in users if (s.source in u.tags) and not u.vacation])
+            self.layers.append(s)
+
+    def schedule(self, hour):
+        lines = []
+        for l in self.layers:
+            lines.append(str(l.current(hour)))
+        return "\n".join(lines)
+
+    def __str__(self):
+        if DEBUG:
+            return "EscalationPolicy({})|\n" + "\n\t".join([str(l) for l in self.layers])
+        else:
+            return "EscalationPolicy({})".format(self.id)
+
+
+class Schedule(object):
+    def __init__(self, yaml):
+        self.id = None
+        self.name = yaml["name"]
+        self.source = yaml["source"]
+        self.offset = yaml.get("offset", 0)
+        self.respect_offhours = yaml.get("respect_offhours", True)
+        self.block_size = yaml.get("block_size", DEFAULT_BLOCK_SIZE)
+
+    def set_users(self, users):
+        u = deque(users)
+        u.rotate(self.offset)
+        self.users = list(u)
+
+    def current(self, hour):
+        chunk = int(hour / self.block_size)
+        probable_index = chunk % len(self.users)
+        users = deque(copy.copy(self.users))
+        users.rotate(probable_index)
+
+        if self.respect_offhours:
+            found = None
+            while found is None and len(users) > 0:
+                potential_user = users[0]
+                if hour not in potential_user.off_hours:
+                    found = potential_user
+                    break
+                else:
+                    users.popleft()
+
+            return found
+        else:
+            return users[0]
+
+    @classmethod
+    def default_data(cls, name, start, placeholder_user_id):
+        return {
+            "name": name,
+            "schedule_layers": [{
+                "start": start.isoformat(),
+                "users": [{"user": {"id": placeholder_user_id}, "member_order": 1}],
+                "rotation_virtual_start": start.isoformat(),
+                "priority": 1,
+                "rotation_turn_length_seconds": 60 * 60,
+                "name": "default"
+            }],
+            "time_zone": PD_TIMEZONES[DEFAULT_TIME_ZONE],
+        }
+
+    @classmethod
+    def create_override(cls, user_id, start, hours=1):
+        return {
+            "user_id": user_id,
+            "start": start.isoformat(),
+            "end": (start + timedelta(hours=hours)).isoformat(),
+        }
+
+    def __str__(self):
+        if DEBUG:
+            return "Schedule({})|name:{} source:{} offset:{} respect_offhours:{} block_size:{}".format(
+                self.id, self.name, self.source, self.offset,
+                self.respect_offhours, self.block_size)
+        else:
+            return "Schedule({}:{}) u:{}".format(self.id, self.name, self.users)
+
+
+class PagerDutyDuty(object):
+    def __init__(self, yaml_config_path, apikey, year, week):
+        self.local_users = []
+        self.local_escalation_policies = []
+
+        self.apikey = apikey
+        self.year = year
+        self.week = week
+
+        self.load_yaml(yaml_config_path)
+
+        dstr = "{}-{}-{}-{}".format(self.year, self.week - 1, 0, DEFAULT_TIME_ZONE)
+        self.start_day = datetime.strptime(dstr, "%Y-%U-%w-%Z")
+
+        self.pd = PagerDuty(self.subdomain, apikey)
+
+    def ensure_remote_schedule(self, sname, fallback_user_id):
+        """ get or create a schedule of the given name """
+        remote_schedules = filter(
+            lambda x: x.name == sname, self.pd.schedules.list())
+        if len(remote_schedules) == 0:
+            return self.pd.schedules.create(**Schedule.default_data(sname, self.start_day, fallback_user_id))
+        elif len(remote_schedules) > 1:
+            raise Exception(
+                "Too many schedules found for name: {}".format(sname))
+        else:
+            return remote_schedules[0]
+
+    def set_schedule(self):
+        """ actually setup schedule layers + overrides """
+        for ep in self.local_escalation_policies:
+            remote_ep = self.pd.escalation_policies.show(ep.id)
+            for schedule in ep.layers:
+
+                # get or create the schedule of the given name
+                remote_schedule = self.ensure_remote_schedule(
+                    schedule.name, ep.fallback_user_id)
+
+                # clear out all overrides for the span of the week that we are scheduling
+                start_iso = self.start_day.isoformat()
+                end_iso = (
+                    self.start_day + timedelta(hours=24 * 7)).isoformat()
+                existing_overrides = remote_schedule.overrides.list(
+                    editable=True, since=start_iso, until=end_iso)
+
+                for override in existing_overrides:
+                    print "removing existing override: {}".format(override.id)
+                    remote_schedule.overrides.delete(override.id)
+
+                for i in range(24 * 7):
+                    dt = self.start_day + timedelta(hours=i)
+                    who = schedule.current(i)
+                    override = Schedule.create_override(who.id, dt)
+                    print "scheduling {} for {} to {}".format(
+                        who, dt, dt + timedelta(hours=1))
+                    remote_schedule.overrides.create(**override)
+
+    def load_yaml(self, yaml_config_path):
+        global DEFAULT_TIME_ZONE
+        with file(yaml_config_path, "r") as schedule_file:
+            dat = load(schedule_file.read())
+            self.subdomain = dat['subdomain']
+            DEFAULT_TIME_ZONE = dat.get('DEFAULT_TIME_ZONE', 'UTC')
+
+            for oh in dat.get('offhours', []):
+                OFFHOURS[oh] = dat['offhours'][oh]
+
+            for u in dat['users']:
+                self.local_users.append(User(u))
+
+            ep = EscalationPolicy(dat, self.local_users)
+            self.local_escalation_policies.append(ep)
+
+
+if __name__ == "__main__":
+    # default to next week
+    next_week = date.today() + timedelta(weeks=1)
+    year = next_week.year
+    week = next_week.isocalendar()[1]
+
+    parser = argparse.ArgumentParser(description="An interface for PagerDuty that takes all the bullshit out")
+    parser.add_argument("-k", "--key", default="XpfvSWEd3hqdCh7LTfjy",
+                        help="PagerDuty API Key")
+    parser.add_argument("-y", "--year", default=year, type=int,
+                        help="Year to schedule for (defaults to next week)")
+    parser.add_argument("-w", "--week", default=week, type=int,
+                        help="Week number to schedule for (defaults to next week)")
+    parser.add_argument("yaml_config_path", type=str, help="Path to YAML schedule file")
+
+    args = parser.parse_args()
+
+    p = PagerDutyDuty(args.yaml_config_path, args.key, args.year, args.week)
+
+    try:
+        p.set_schedule()
+    except KeyboardInterrupt:
+        print "bailing!"
