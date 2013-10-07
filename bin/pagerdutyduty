@@ -30,7 +30,8 @@ class User(object):
 
     @property
     def off_hours(self):
-        return OFFHOURS[self.offhours]
+        #TODO: we don't actually support the list form yet
+        return OFFHOURS[self.offhours[0]]
 
     def __str__(self):
         if DEBUG:
