@@ -1,4 +1,4 @@
-**BrowserTab is released by the [Olark team](http://www.olark.com/about)
+**pagerdutyduty is released by the [Olark team](http://www.olark.com/about)
 under the following license.**
 
 Copyright (c) 2013, Habla, Inc.
