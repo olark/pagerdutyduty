@@ -1,2 +1,2 @@
-pygerduty==0.16
-PyYAML==3.10
+pygerduty>=0.16
+PyYAML>=3.10
