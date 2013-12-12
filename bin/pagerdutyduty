@@ -16,6 +16,7 @@ OFFHOURS = {}
 
 PD_TIMEZONES = {
     "EST": "Eastern Time (US & Canada)",
+    "MST": "Mountain Time (US & Canada)",
     "PST": "Pacific Time (US & Canada)",
     "UTC": "UTC",
 }
@@ -30,8 +31,14 @@ class User(object):
 
     @property
     def off_hours(self):
-        #TODO: we don't actually support the list form yet
-        return OFFHOURS[self.offhours[0]]
+        all_hours = []
+        for offhours in self.offhours:
+            if isinstance(offhours, basestring):
+                for h in OFFHOURS[offhours]:
+                    all_hours.append(h)
+            else:
+                all_hours.append(offhours)
+        return all_hours
 
     def __str__(self):
         if DEBUG:
@@ -196,10 +203,11 @@ class PagerDutyDuty(object):
                 for i in range(24 * 7):
                     dt = self.start_day + timedelta(hours=i)
                     who = schedule.current(i)
-                    override = Schedule.create_override(who.id, dt)
-                    print "scheduling {} for {} to {}".format(
-                        who, dt, dt + timedelta(hours=1))
-                    remote_schedule.overrides.create(**override)
+                    if who is not None:
+                        override = Schedule.create_override(who.id, dt)
+                        print "scheduling {} for {} to {}".format(
+                            who, dt, dt + timedelta(hours=1))
+                        remote_schedule.overrides.create(**override)
 
     def load_yaml(self, yaml_config_path):
         global DEFAULT_TIME_ZONE
@@ -228,9 +236,9 @@ if __name__ == "__main__":
     parser.add_argument("-k", "--key", default="XpfvSWEd3hqdCh7LTfjy",
                         help="PagerDuty API Key")
     parser.add_argument("-y", "--year", default=year, type=int,
-                        help="Year to schedule for (defaults to next week)")
+                        help="Year to schedule for (defaults to next week's year: {})".format(year))
     parser.add_argument("-w", "--week", default=week, type=int,
-                        help="Week number to schedule for (defaults to next week)")
+                        help="Week number to schedule for (defaults to next week: {})".format(week))
     parser.add_argument("yaml_config_path", type=str, help="Path to YAML schedule file")
 
     args = parser.parse_args()
