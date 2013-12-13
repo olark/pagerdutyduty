@@ -12,6 +12,7 @@ kwargs = {
     "author_email": "jeff@olark.com",
     "maintainer_email": "jeff@olark.com",
     "url": "https://github.com/olark/pagerdutyduty",
+    "install_requires": ['pygerduty>=0.16', 'PyYAML>=3.10'],
 }
 
 setup(**kwargs)
