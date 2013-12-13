@@ -5,7 +5,6 @@ from distutils.core import setup
 kwargs = {
     "name": "pagerdutyduty",
     "version": "0.3",
-    "py_modules": ["pagerdutyduty"],
     "scripts": ["bin/pagerdutyduty"],
     "description": "Set PagerDuty schedules with SMART COMPUTERS and YAML",
     "author": "Jeff Zellner",
