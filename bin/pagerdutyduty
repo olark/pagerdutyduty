@@ -143,13 +143,14 @@ class Schedule(object):
 
 
 class PagerDutyDuty(object):
-    def __init__(self, yaml_config_path, apikey, year, week):
+    def __init__(self, yaml_config_path, apikey, year, week, number):
         self.local_users = []
         self.local_escalation_policies = []
 
         self.apikey = apikey
         self.year = year
         self.week = week
+        self.number = number
 
         self.load_yaml(yaml_config_path)
 
@@ -191,8 +192,7 @@ class PagerDutyDuty(object):
 
                 # clear out all overrides for the span of the week that we are scheduling
                 start_iso = self.start_day.isoformat()
-                end_iso = (
-                    self.start_day + timedelta(hours=24 * 7)).isoformat()
+                end_iso = (self.start_day + timedelta(hours=24 * 7 * self.number)).isoformat()
                 existing_overrides = remote_schedule.overrides.list(
                     editable=True, since=start_iso, until=end_iso)
 
@@ -200,7 +200,7 @@ class PagerDutyDuty(object):
                     print "removing existing override: {}".format(override.id)
                     remote_schedule.overrides.delete(override.id)
 
-                for i in range(24 * 7):
+                for i in range(24 * 7 * self.number):
                     dt = self.start_day + timedelta(hours=i)
                     who = schedule.current(i)
                     if who is not None:
@@ -239,11 +239,13 @@ if __name__ == "__main__":
                         help="Year to schedule for (defaults to next week's year: {})".format(year))
     parser.add_argument("-w", "--week", default=week, type=int,
                         help="Week number to schedule for (defaults to next week: {})".format(week))
+    parser.add_argument("-n", "--number", default=1, type=int,
+                        help="Number of weeks to schedule from starting date")
     parser.add_argument("yaml_config_path", type=str, help="Path to YAML schedule file")
 
     args = parser.parse_args()
 
-    p = PagerDutyDuty(args.yaml_config_path, args.key, args.year, args.week)
+    p = PagerDutyDuty(args.yaml_config_path, args.key, args.year, args.week, args.number)
 
     try:
         p.set_schedule()
