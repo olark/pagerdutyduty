@@ -122,7 +122,7 @@ class Schedule(object):
                 "rotation_turn_length_seconds": 60 * 60,
                 "name": "default"
             }],
-            "time_zone": PD_TIMEZONES[DEFAULT_TIME_ZONE],
+            "time_zone": PD_TIMEZONES['UTC'],
         }
 
     @classmethod
@@ -154,7 +154,7 @@ class PagerDutyDuty(object):
 
         self.load_yaml(yaml_config_path)
 
-        dstr = "{}-{}-{}-{}".format(self.year, self.week - 1, 0, DEFAULT_TIME_ZONE)
+        dstr = "{}-{}-{}-UTC".format(self.year, self.week - 1, 0)
         self.start_day = datetime.strptime(dstr, "%Y-%U-%w-%Z")
 
         self.pd = PagerDuty(self.subdomain, apikey)
@@ -173,6 +173,21 @@ class PagerDutyDuty(object):
 
     def set_schedule(self):
         """ actually setup schedule layers + overrides """
+
+        # clear out all overrides for the span of the week that we are scheduling
+        utcnow = datetime.utcnow()
+        end_day = self.start_day + timedelta(hours=24 * 7 * self.number)
+
+        if utcnow > self.start_day:
+            self.start_day = datetime(utcnow.year, utcnow.month, utcnow.day, utcnow.hour, 0, 0, 0)
+
+        start_iso = self.start_day.isoformat()
+        end_iso = end_day.isoformat()
+
+        # hours we should be scheduling between (start or now) and end
+        hours = (end_day - self.start_day).total_seconds() / 3600.0
+
+
         for ep in self.local_escalation_policies:
             remote_ep = self.pd.escalation_policies.show(ep.id)
             for schedule in ep.layers:
@@ -190,9 +205,7 @@ class PagerDutyDuty(object):
                     remote_ep.escalation_rules.create(escalation_delay_in_minutes=3,
                         rule_object={'type': 'schedule', 'id': remote_schedule.id})
 
-                # clear out all overrides for the span of the week that we are scheduling
-                start_iso = self.start_day.isoformat()
-                end_iso = (self.start_day + timedelta(hours=24 * 7 * self.number)).isoformat()
+
                 existing_overrides = remote_schedule.overrides.list(
                     editable=True, since=start_iso, until=end_iso)
 
@@ -200,7 +213,7 @@ class PagerDutyDuty(object):
                     print "removing existing override: {}".format(override.id)
                     remote_schedule.overrides.delete(override.id)
 
-                for i in range(24 * 7 * self.number):
+                for i in range(int(hours)):
                     dt = self.start_day + timedelta(hours=i)
                     who = schedule.current(i)
                     if who is not None:
@@ -210,11 +223,9 @@ class PagerDutyDuty(object):
                         remote_schedule.overrides.create(**override)
 
     def load_yaml(self, yaml_config_path):
-        global DEFAULT_TIME_ZONE
         with file(yaml_config_path, "r") as schedule_file:
             dat = load(schedule_file.read())
             self.subdomain = dat['subdomain']
-            DEFAULT_TIME_ZONE = dat.get('DEFAULT_TIME_ZONE', 'UTC')
 
             for oh in dat.get('offhours', []):
                 OFFHOURS[oh] = dat['offhours'][oh]
