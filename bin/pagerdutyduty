@@ -223,7 +223,8 @@ class PagerDutyDuty(object):
                         try:
                             remote_schedule.overrides.create(**override)
                         except pygerduty.BadRequest:
-                            pass
+                            print "unable to schedule {} for {} to {}".format(
+                                who, dt, dt + timedelta(hours=1))
 
     def load_yaml(self, yaml_config_path):
         with file(yaml_config_path, "r") as schedule_file:
